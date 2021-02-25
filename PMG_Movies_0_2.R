@@ -58,6 +58,16 @@ edx <- rbind(edx, removed)
 
 rm(dl, ratings, movies, test_index, temp, movielens, removed)
 
+# partition edx
+set.seed(1748, sample.kind="Rounding")
+test_index = createDataPartition(y = edx$rating, times = 1, p = 0.2, list = FALSE)
+edx_train <- edx[-test_index,]
+edx_test <- edx[test_index,]
+
+edx_test <- edx_test %>% 
+  semi_join(edx_train, by = "movieId") %>%
+  semi_join(edx_train, by = "userId")
+
 # Exploratory Data Analysis - Homework questions
 
 # How many movies?
@@ -73,8 +83,9 @@ sum(str_detect(edx$genres, "Romance"))
 
 # The most rated movies
 modern <- edx %>% group_by(movieId, title) %>% summarize(count = n()) %>% 
-            arrange(desc(count))
-head(modern) 
+  arrange(desc(count))
+quantile(modern$count)
+
 # Ratings by user
 user_count <- edx %>% group_by(userId) %>% summarize(count = n()) %>% 
   arrange(desc(count))
@@ -89,25 +100,6 @@ rate_count <- rate_count %>% arrange(rating)
 edx %>% ggplot(aes(rating)) +
   geom_histogram(binwidth = 0.5, fill = "blue", col = "black") +
   xlab("Movie Rating")
-
-
-
-# Split edx into training and test sets for model training and internal testing
-
-set.seed(1748, sample.kind="Rounding")
-test_index = createDataPartition(y = edx$rating, times = 1, p = 0.2, list = FALSE)
-edx_train <- edx[-test_index,]
-edx_test <- edx[test_index,]
-
-edx_test <- edx_test %>% 
-  semi_join(edx_train, by = "movieId") %>%
-  semi_join(edx_train, by = "userId")
-
-str(edx_test)
-str(edx_train)
-
-ratings <- edx_train %>% group_by(userId) %>% summarize( count = n(), meancount = mean(n()), err = sd(n()))
-ratings
 
 
 # Try zeroth model -- just the average rating
@@ -127,6 +119,7 @@ movie
 movie_avgs %>% ggplot(aes(b_i)) +
   geom_histogram(binwidth = 0.2, fill = "blue", col = "black") +
   xlab("Movie Effect")
+quantile(movie_avgs$b_i)
 
 # Add user effect
 
@@ -143,73 +136,42 @@ mov_us_predicted_ratings <- edx_test %>%
 mov_us <- RMSE(mov_us_predicted_ratings, edx_test$rating)
 mov_us
 
+user_avgs %>% ggplot(aes(b_u)) +
+  geom_histogram(binwidth = 0.2, fill = "blue", col = "black") +
+  xlab("User Effect")
+quantile(user_avgs$b_u)
+median(user_avgs$b_u)
+
 # Regularization
-lambda <- 3
-tr_avg <- mean(edx_train$rating)
-movie_reg_avgs <- edx_train %>% 
-  group_by(movieId) %>% 
-  summarize(b_i = sum(rating - tr_avg)/(n()+lambda), n_i = n()) 
 
-tibble(original = movie_avgs$b_i, 
-       regularlized = movie_reg_avgs$b_i, 
-       n = movie_reg_avgs$n_i) %>%
-  ggplot(aes(original, regularlized, size=sqrt(n))) + 
-  geom_point(shape=1, alpha=0.5)
-
-movie_titles <- edx_train %>% 
-  select(movieId, title) %>%
-  distinct()
-
-edx_train %>%
-  count(movieId) %>% 
-  left_join(movie_reg_avgs, by = "movieId") %>%
-  left_join(movie_titles, by = "movieId") %>%
-  arrange(desc(b_i)) %>% 
-  slice(1:10) %>% 
-  pull(title)
-
-edx_train %>%
-  count(movieId) %>% 
-  left_join(movie_reg_avgs, by = "movieId") %>%
-  left_join(movie_titles, by="movieId") %>%
-  arrange(b_i) %>% 
-  select(title, b_i, n) %>% 
-  slice(1:10) %>% 
-  pull(title)
-
-mov_reg_predicted_ratings <- edx_test %>% 
-  left_join(movie_reg_avgs, by = "movieId") %>%
-  mutate(pred = tr_avg + b_i) %>%
-  pull(pred)
-RMSE(mov_reg_predicted_ratings, edx_test$rating)
 
 # Optimize lambda for user + movie regularization model
 
-lambdas <- seq(0, 10, 0.25)
+lambdas <- seq(2, 7, 0.25)
 
 rmses <- sapply(lambdas, function(l){
   
-    tr_avg <- mean(edx_train$rating)
-    
-    b_i <- edx_train %>% 
-      group_by(movieId) %>%
-      summarize(b_i = sum(rating - tr_avg)/(n()+l))
-    
-    b_u <- edx_train %>% 
-      left_join(b_i, by="movieId") %>%
-      group_by(userId) %>%
-      summarize(b_u = sum(rating - b_i - tr_avg)/(n()+l))
-    
-    predicted_ratings <- 
-      edx_test %>% 
-      left_join(b_i, by = "movieId") %>%
-      left_join(b_u, by = "userId") %>%
-      mutate(pred = tr_avg + b_i + b_u) %>%
-      pull(pred)
-    
-    return(RMSE(predicted_ratings, edx_test$rating))
-  })
+  tr_avg <- mean(edx_train$rating)
   
+  b_i <- edx_train %>% 
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - tr_avg)/(n()+l))
+  
+  b_u <- edx_train %>% 
+    left_join(b_i, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - tr_avg)/(n()+l))
+  
+  predicted_ratings <- 
+    edx_test %>% 
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    mutate(pred = tr_avg + b_i + b_u) %>%
+    pull(pred)
+  
+  return(RMSE(predicted_ratings, edx_test$rating))
+})
+
 
 lambda_opt <- lambdas[which.min(rmses)]
 lambda_opt
@@ -217,27 +179,75 @@ qplot(lambdas, rmses)
 best_rmse <- min(rmses)
 best_rmse
 
+
+
+# Investigate advanced algorithms - matrix factorization etc 
+# Matrix algebra and Matrix factorization libraries
+library(recosystem)
+library(Matrix)
+
+# select user, movie and rating columns from edx and partitions
+edx_trips <- edx %>% select(userId, movieId, rating)
+edxtr_trips <- edx_train %>% select(userId, movieId, rating)
+edxtst_trips <- edx_test %>% select(userId, movieId) %>% mutate(pred = 0)
+
+# Create Recommender System Object
+
+r <- Reco()
+
+# assemble recosystem data files for edx_train and edx_test partition
+reco_data <- data_memory(edxtr_trips$userId, edxtr_trips$movieId, edxtr_trips$rating, index1 = TRUE)
+reco_test <- data_memory(edxtst_trips$userId, edxtst_trips$movieId, edxtst_trips$rating, index1 = TRUE)
+
+# tune parameters for matrix factorization algorithm
+
+set.seed(1916, sample.kind = "Rounding")
+
+# recosystem tuning function
+res =r$tune(reco_data, opt = list(dim =35L, 
+                                  costp_l1 = 0,
+                                  costp_l2 = c(0.05,0.06, 0.07),
+                                  costq_l1 = 0,
+                                  costq_l2 = c(0.05,0.06,0.07),
+                                  lrate    = 0.1,
+                                  nthread = 8,
+                                  niter = 40,
+                                  nbin = 32,
+                                  verbose  = FALSE)
+)
+res$min
+
+# recosystem training function for matrix factorization model
+r$train(reco_data, opts = c(res$min, nthread = 8, nbin = 32, niter = 40, verbose = FALSE))
+result =  r$output(out_memory(),out_memory())
+
+# recosystem prediction of internal test partition of edx set
+pred_test = r$predict(reco_test, out_memory())
+edxtr_MF_error <- RMSE(pred_test, edx_test$rating)
+edxtr_MF_error
+
+# Function to calculate user and movie effects for regularized user-model 
 reg_user_item <- function(data, l) {
-
+  
   avg <- mean(data$rating)
-
+  
   b_i <- data %>% 
     group_by(movieId) %>%
     summarize(b_i = sum(rating - avg)/(n()+l))
-
+  
   b_u <- data %>% 
     left_join(b_i, by="movieId") %>%
     group_by(userId) %>%
     summarize(b_u = sum(rating - b_i - avg)/(n()+l))
-
+  
   predicted_ratings <- 
     data %>% 
     left_join(b_i, by = "movieId") %>%
     left_join(b_u, by = "userId") %>%
     mutate(pred = avg + b_i + b_u)
-  }
+}
 
-# 
+# Extract training data user and movie effects
 edxtr_pred <- reg_user_item(edx_train, lambda_opt)
 edx_pred <- reg_user_item(edx, lambda_opt)
 # Form b_u sparse vectors
@@ -251,62 +261,6 @@ edx_test_pred <-
   left_join(edxtr_pred_i, by = "movieId") %>%
   left_join(edxtr_pred_u, by = "userId")
 edx_test_pred <- edx_test_pred %>% mutate(pred = tr_avg + b_u + b_i)
-
-rmse_edxtest <- RMSE(edx_test_pred$pred, edx_test_pred$rating)
-rmse_edxtest
-
-
-
-    
-
-# Investigate advanced algorithms - matrix factorization etc 
-# Matrix algebra and Matrix factorization libraries
-library(recosystem)
-library(Matrix)
-
-# select user, movie and rating columns from edx and partitions
-edx_trips <- edx %>% select(userId, movieId, rating)
-edxtr_trips <- edx_train %>% select(userId, movieId, rating)
-edxtst_trips <- edx_test %>% select(userId, movieId) %>% mutate(pred = 0)
-# Create Recommender System Object
-
-r <- Reco()
-
-# assemble recosystem data matrix for edx_train partition
-reco_data <- data_memory(edxtr_trips$userId, edxtr_trips$movieId, edxtr_trips$rating, index1 = TRUE)
-reco_test <- data_memory(edxtst_trips$userId, edxtst_trips$movieId, edxtst_trips$rating, index1 = TRUE)
-reco_resid <- data_memory(edxtr_res$userId, edxtr_res$movieId, edxtr_res$resid, index1 = TRUE)
-
-# tune parameters for matrix factorization algorithm
-
-set.seed(1916, sample.kind = "Rounding")
-
-# recosystem tuning function
-
-# res =r$tune(reco_data, opt = list(dim =35L, 
-#                            costp_l1 = 0,
-#                             costp_l2 = c(0.05,0.06, 0.07),
-#                             costq_l1 = 0,
-#                             costq_l2 = c(0.05,0.06,0.07),
-#                             lrate    = 0.1,
-#                             nthread = 8,
-#                             niter = 40,
-#                             nbin = 32,
-#                             verbose  = TRUE)
-#       )
-
-# res
-
-
-# recosystem prediction of internal test partition of edx set
-#pred_test = r$predict(reco_test, out_memory())
-#edxtr_MF_error <- RMSE(pred_test, edx_test$rating)
-#edxtr_MF_error
-
-pred_test_res = r$predict(reco_test, out_memory())
-edx_test_pred_res <- edx_test_pred %>% mutate(pred_res = pred + pred_test_res)
-test_pred_res_error <- RMSE(edx_test_pred_res$pred_res, edx_test$rating)
-
 # test weighted average of models
 
 weights <- seq(0, 1, 0.05)
@@ -318,10 +272,46 @@ blend_rmses <- sapply(weights, function(w) {
 qplot(weights, blend_rmses)
 min(blend_rmses)
 
+
+# Matrix Factorization of Residuals of Regularized User+Movie model
+
+# Calculate residuals for edx and edxtra
+edxtr_res <- edxtr_pred %>% select(userId, movieId, rating, pred) %>% 
+  mutate(resid = rating-pred) %>% select(userId, movieId, resid)
+edx_res <- edx_pred %>% select(userId, movieId, rating, pred) %>% 
+  mutate(resid = rating-pred) %>% select(userId, movieId, resid)
+
+r_resid <- Reco()
+
+# assemble recosystem data matrix for residuals in edx_train partition
+reco_resid <- data_memory(edxtr_res$userId, edxtr_res$movieId, edxtr_res$resid, index1 = TRUE)
+# tune model for residual matrix
+resid_rec =r_resid$tune(reco_resid, opt = list(dim =35L, 
+                                               costp_l1 = 0,
+                                               costp_l2 = c(0.05,0.06, 0.07),
+                                               costq_l1 = 0,
+                                               costq_l2 = c(0.05,0.06,0.07),
+                                               lrate    = 0.1,
+                                               nthread = 8,
+                                               niter = 40,
+                                               nbin = 32,
+                                               verbose  = FALSE)
+)
+resid_rec$min
+
+# recosystem training function for matrix factorization model
+
+r_resid$train(reco_resid, opts = c(resid_rec$min, nthread = 8, nbin = 32, niter = 40, verbose = FALSE))
+result =  r_resid$output(out_memory(),out_memory())
+
+pred_test_res = r_resid$predict(reco_test, out_memory())
+edx_test_pred_res <- edx_test_pred %>% mutate(pred_res = pred + pred_test_res)
+test_pred_res_error <- RMSE(edx_test_pred_res$pred_res, edx_test$rating)
+test_pred_res_error
+
 # select user, movie and rating columns from edx and partitions
 edx_trips <- edx %>% select(userId, movieId, rating)
-edxtr_trips <- edx_train %>% select(userId, movieId, rating)
-edxtst_trips <- edx_test %>% select(userId, movieId) %>% mutate(pred = 0)
+
 # Create Recommender System Object
 
 r_edx <- Reco()
@@ -336,81 +326,26 @@ set.seed(1916, sample.kind = "Rounding")
 # recosystem tuning function
 
 res_edx =r_edx$tune(reco_data_edx, opt = list(dim =35L, 
-                             costp_l1 = 0,
-                              costp_l2 = c(0.01,0.04,0.07,0.1),
-                              costq_l1 = 0.01,
-                              costq_l2 = c(0.01,0.04,0.07,0.1),
-                              lrate    = 0.1,
-                              nthread = 8,
-                              niter = 40,
-                              nbin = 32,
-                              verbose  = TRUE)
-        )
-res_edx
-
-
-# recosystem training function for matrix factorization model
-
-r_edx$train(reco_data_edx, opts = c(res_edx$min, nthread = 8, nbin = 32, niter = 40))
-result =  r$output(out_memory(),out_memory())
-
-# recosystem prediction of internal test partition of edx set
-#pred_test = r$predict(reco_test, out_memory())
-#edxtr_MF_error <- RMSE(pred_test, edx_test$rating)
-#edxtr_MF_error
-
-
+                                              costp_l1 = 0,
+                                              costp_l2 = c(0.01,0.04,0.07,0.1),
+                                              costq_l1 = 0.01,
+                                              costq_l2 = c(0.01,0.04,0.07,0.1),
+                                              lrate    = 0.1,
+                                              nthread = 8,
+                                              niter = 40,
+                                              nbin = 32,
+                                              verbose  = FALSE)
+)
+res_edx$min
 
 # Train matrix factorization model on full edx dataset
 
-r_edx$train(reco_data_edx, opts = c(res_edx$min, nthread = 8, nbin = 32, niter = 40))
-result =  r$output(out_memory(),out_memory())
+r_edx$train(reco_data_edx, opts = c(res_edx$min, nthread = 8, nbin = 32, niter = 40, verbose = FALSE))
+result =  r_edx$output(out_memory(),out_memory())
 
 # Predict ratings for validation dataset
 valid_trip <- validation %>% select(userId, movieId) %>% mutate(pred = 0)
 valid_reco <- data_memory(valid_trip$userId, valid_trip$movieId, valid_trip$rating, index1 = TRUE)
-pred_valid = r$predict(valid_reco, out_memory())
+pred_valid = r_edx$predict(valid_reco, out_memory())
 valid_error <- RMSE(pred_valid, validation$rating)
 valid_error
-
-# test weighted average of models
-
-weights <- seq(0, 1, 0.05)
-
-blend_rmses <- sapply(weights, function(w) {
-  blend_pred <- w*pred_test + (1-w)*edx_test_pred$pred
-  RMSE(blend_pred, edx_test$rating)
-})
-qplot(weights, blend_rmses)
-min(blend_rmses)
-
-# Matrix Factorization of Residuals of Regularized User+Movie model
-
-# Calculate residuals for edx and edx_tr
-edxtr_res <- edxtr_pred %>% select(userId, movieId, rating, pred) %>% 
-  mutate(resid = rating-pred) %>% select(userId, movieId, resid)
-edx_res <- edx_pred %>% select(userId, movieId, rating, pred) %>% 
-  mutate(resid = rating-pred) %>% select(userId, movieId, resid)
-
-r_resid <- Reco()
-
-# assemble recosystem data matrix for residuals in edx_train partition
-reco_resid <- data_memory(edxtr_res$userId, edxtr_res$movieId, edxtr_res$resid, index1 = TRUE)
-# tune model for residual matrix
-resid_rec =r_resid$tune(reco_resid, opt = list(dim =35L, 
-                                         nthread = 8,
-                                         niter = 40,
-                                         nbin = 32,
-                                         verbose  = FALSE)
-)
-resid_rec
-
-# recosystem training function for matrix factorization model
-
-r_resid$train(reco_resid, opts = c(resid_rec$min, nthread = 8, nbin = 32, niter = 40))
-result =  r_resid$output(out_memory(),out_memory())
-
-pred_test_edx = r_resid$predict(reco_test, out_memory())
-edx_test_pred_res <- edx_test_pred %>% mutate(pred_res = pred + pred_test_res)
-test_pred_res_error <- RMSE(edx_test_pred_res$pred_res, edx_test$rating)
-test_pred_res_error
