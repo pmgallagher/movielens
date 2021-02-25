@@ -8,7 +8,7 @@ bibliography: Data_Science.bib
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-options(digits = 6)
+options(digits = 5)
 ```
 
 ## Executive Summary
@@ -65,7 +65,6 @@ library(tidyverse)
 library(caret)
 library(data.table)
 library(Matrix)
-library(compiler)
 library(dplyr)
 library(stringr)
 library(lattice)
@@ -157,7 +156,7 @@ modern <- edx %>% group_by(movieId, title) %>% summarize(count = n()) %>%
 quantile(modern$count)
 ```
 Grouping by movieID and then counting the rows for each movie, we can find the number of times each movie was rated.  The quantile function shows that the least rated movie has just a single rating while the most rated movie has `r max(modern$count)` ratings.  The median movie has 122 ratings, and the mean number of ratings is `r mean(modern$count)` per movie.  The top six most rated movies are listed in the table.
-```{r tables-most_rated_movies}
+```{r tables-most_rated_movies, echo=FALSE}
 knitr::kable(head(modern), caption = 'Most-rated Movies in edx Dataset')
 ```
 Similarly, the number of ratings per user can be analyzed by grouping by `userId`.  
